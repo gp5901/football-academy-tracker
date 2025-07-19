@@ -1,30 +1,23 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import jwt from "jsonwebtoken"
+import { jwtVerify } from "jose"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || "your-secret-key")
 
-// Mock data - In production, use a real database
-const coaches = [
-  { id: "1", username: "john_doe", name: "John Doe", ageGroup: "U-12" },
-  { id: "2", username: "jane_smith", name: "Jane Smith", ageGroup: "U-16" },
+// Mock data
+const mockCoaches = [
+  { id: "1", username: "john_doe", passwordHash: "hashed_password", ageGroup: "U-12" },
+  { id: "2", username: "jane_smith", passwordHash: "hashed_password", ageGroup: "U-16" },
 ]
 
-const sessions = [
-  { id: "1", date: new Date().toISOString(), timeSlot: "morning", ageGroup: "U-12" },
-  { id: "2", date: new Date().toISOString(), timeSlot: "evening", ageGroup: "U-12" },
-  { id: "3", date: new Date().toISOString(), timeSlot: "morning", ageGroup: "U-16" },
-  { id: "4", date: new Date().toISOString(), timeSlot: "evening", ageGroup: "U-16" },
-]
-
-const players = [
+const mockPlayers = [
   // U-12 Players
   {
     id: "1",
     name: "Alex Johnson",
     ageGroup: "U-12",
     bookedSessions: 12,
-    attendedSessions: 8,
+    attendedSessions: 10,
     complimentarySessions: 1,
   },
   {
@@ -35,86 +28,147 @@ const players = [
     attendedSessions: 11,
     complimentarySessions: 0,
   },
-  { id: "3", name: "Liam Brown", ageGroup: "U-12", bookedSessions: 12, attendedSessions: 6, complimentarySessions: 2 },
+  { id: "3", name: "Liam Brown", ageGroup: "U-12", bookedSessions: 12, attendedSessions: 8, complimentarySessions: 2 },
   {
     id: "4",
     name: "Sophia Davis",
     ageGroup: "U-12",
     bookedSessions: 12,
-    attendedSessions: 10,
-    complimentarySessions: 0,
+    attendedSessions: 9,
+    complimentarySessions: 1,
   },
-  { id: "5", name: "Noah Miller", ageGroup: "U-12", bookedSessions: 12, attendedSessions: 9, complimentarySessions: 1 },
+  { id: "5", name: "Noah Miller", ageGroup: "U-12", bookedSessions: 12, attendedSessions: 7, complimentarySessions: 3 },
 
   // U-16 Players
   {
     id: "6",
     name: "Olivia Garcia",
     ageGroup: "U-16",
-    bookedSessions: 15,
-    attendedSessions: 13,
+    bookedSessions: 12,
+    attendedSessions: 11,
     complimentarySessions: 0,
   },
   {
     id: "7",
     name: "Ethan Rodriguez",
     ageGroup: "U-16",
-    bookedSessions: 15,
-    attendedSessions: 12,
+    bookedSessions: 12,
+    attendedSessions: 10,
     complimentarySessions: 1,
   },
   {
     id: "8",
     name: "Ava Martinez",
     ageGroup: "U-16",
-    bookedSessions: 15,
-    attendedSessions: 14,
-    complimentarySessions: 0,
+    bookedSessions: 12,
+    attendedSessions: 9,
+    complimentarySessions: 2,
   },
   {
     id: "9",
     name: "Mason Anderson",
     ageGroup: "U-16",
-    bookedSessions: 15,
-    attendedSessions: 10,
-    complimentarySessions: 2,
+    bookedSessions: 12,
+    attendedSessions: 8,
+    complimentarySessions: 1,
   },
   {
     id: "10",
     name: "Isabella Taylor",
     ageGroup: "U-16",
-    bookedSessions: 15,
-    attendedSessions: 15,
+    bookedSessions: 12,
+    attendedSessions: 12,
     complimentarySessions: 0,
+  },
+]
+
+const mockSessions = [
+  {
+    id: "1",
+    date: new Date().toISOString().split("T")[0],
+    timeSlot: "morning" as const,
+    ageGroup: "U-12",
+  },
+  {
+    id: "2",
+    date: new Date().toISOString().split("T")[0],
+    timeSlot: "evening" as const,
+    ageGroup: "U-12",
+  },
+  {
+    id: "3",
+    date: new Date().toISOString().split("T")[0],
+    timeSlot: "morning" as const,
+    ageGroup: "U-16",
+  },
+  {
+    id: "4",
+    date: new Date().toISOString().split("T")[0],
+    timeSlot: "evening" as const,
+    ageGroup: "U-16",
   },
 ]
 
 export async function GET(request: NextRequest) {
   try {
     const cookieStore = await cookies()
-    const token = cookieStore.get("auth-token")?.value
+    const token = cookieStore.get("auth-token")
 
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as any
-    const coach = coaches.find((c) => c.id === decoded.coachId)
+    // Verify JWT token
+    const { payload } = await jwtVerify(token.value, JWT_SECRET)
+    const coachId = payload.coachId as string
 
+    // Find coach
+    const coach = mockCoaches.find((c) => c.id === coachId)
     if (!coach) {
       return NextResponse.json({ error: "Coach not found" }, { status: 404 })
     }
 
-    // Filter sessions and players by coach's age group
-    const coachSessions = sessions.filter((s) => s.ageGroup === coach.ageGroup)
-    const coachPlayers = players.filter((p) => p.ageGroup === coach.ageGroup)
+    // Get coach's players
+    const coachPlayers = mockPlayers.filter((p) => p.ageGroup === coach.ageGroup)
+
+    // Get today's sessions for coach's age group
+    const todaySessions = mockSessions.filter((s) => s.ageGroup === coach.ageGroup)
+
+    // Calculate statistics
+    const totalPlayers = coachPlayers.length
+    const averageAttendance =
+      totalPlayers > 0
+        ? Math.round(
+            coachPlayers.reduce((acc, player) => {
+              const rate = player.bookedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
+              return acc + rate
+            }, 0) / totalPlayers,
+          )
+        : 0
+
+    const lowAttendancePlayers = coachPlayers.filter((player) => {
+      const rate = player.bookedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
+      return rate < 70
+    }).length
+
+    const stats = {
+      totalPlayers,
+      averageAttendance,
+      lowAttendancePlayers,
+    }
 
     return NextResponse.json({
-      coach,
-      sessions: coachSessions,
+      coach: {
+        id: coach.id,
+        username: coach.username,
+        ageGroup: coach.ageGroup,
+      },
+      todaySessions,
       players: coachPlayers,
+      stats,
     })
   } catch (error) {
+    console.error("Dashboard API error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

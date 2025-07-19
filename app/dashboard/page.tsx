@@ -36,7 +36,7 @@ interface DashboardData {
   coach: Coach
   todaySessions: Session[]
   players: Player[]
-  stats: {
+  stats?: {
     totalPlayers: number
     averageAttendance: number
     lowAttendancePlayers: number
@@ -151,6 +151,25 @@ export default function Dashboard() {
     return data.players.filter((player) => player.ageGroup === session.ageGroup) || []
   }
 
+  // Calculate stats if not provided by API
+  const stats = data.stats || {
+    totalPlayers: data.players?.length || 0,
+    averageAttendance:
+      data.players?.length > 0
+        ? Math.round(
+            data.players.reduce((acc, player) => {
+              const rate = player.bookedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
+              return acc + rate
+            }, 0) / data.players.length,
+          )
+        : 0,
+    lowAttendancePlayers:
+      data.players?.filter((player) => {
+        const rate = player.bookedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
+        return rate < 70
+      }).length || 0,
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -159,10 +178,10 @@ export default function Dashboard() {
           <div className="flex justify-between items-center h-16">
             <div>
               <h1 className="text-xl font-semibold text-gray-900">Football Academy Dashboard</h1>
-              <p className="text-sm text-gray-600">Welcome back, Coach {data.coach.username}</p>
+              <p className="text-sm text-gray-600">Welcome back, Coach {data.coach?.username || "Unknown"}</p>
             </div>
             <div className="flex items-center gap-4">
-              <Badge variant="secondary">{data.coach.ageGroup}</Badge>
+              <Badge variant="secondary">{data.coach?.ageGroup || "Unknown"}</Badge>
               <Button variant="outline" size="sm" onClick={exportAttendanceData}>
                 <Download className="h-4 w-4 mr-2" />
                 Export Data
@@ -185,7 +204,7 @@ export default function Dashboard() {
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{data.stats.totalPlayers}</div>
+              <div className="text-2xl font-bold">{stats.totalPlayers}</div>
               <p className="text-xs text-muted-foreground">In your age group</p>
             </CardContent>
           </Card>
@@ -196,7 +215,7 @@ export default function Dashboard() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{data.stats.averageAttendance}%</div>
+              <div className="text-2xl font-bold">{stats.averageAttendance}%</div>
               <p className="text-xs text-muted-foreground">This month</p>
             </CardContent>
           </Card>
@@ -207,7 +226,7 @@ export default function Dashboard() {
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-red-600">{data.stats.lowAttendancePlayers}</div>
+              <div className="text-2xl font-bold text-red-600">{stats.lowAttendancePlayers}</div>
               <p className="text-xs text-muted-foreground">Players below 70%</p>
             </CardContent>
           </Card>
@@ -216,7 +235,7 @@ export default function Dashboard() {
         {/* Today's Sessions */}
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Today's Sessions</h2>
-          {data.todaySessions.length > 0 ? (
+          {data.todaySessions && data.todaySessions.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {data.todaySessions.map((session) => (
                 <SessionCard
@@ -241,7 +260,7 @@ export default function Dashboard() {
         {/* Player Statistics */}
         <div>
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Player Statistics</h2>
-          <PlayerStats players={data.players} />
+          <PlayerStats players={data.players || []} />
         </div>
       </main>
     </div>

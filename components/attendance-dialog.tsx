@@ -3,12 +3,11 @@
 import type React from "react"
 
 import { useState, useRef } from "react"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
-import { Camera, Upload, Check, X, Gift, Save } from "lucide-react"
+import { Camera, Upload, Check, X, Clock, AlertCircle } from "lucide-react"
 
 interface Session {
   id: string
@@ -34,7 +33,7 @@ interface AttendanceDialogProps {
   onAttendanceUpdate: () => void
 }
 
-type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"
+type AttendanceStatus = "present_regular" | "present_complimentary" | "absent" | null
 
 export function AttendanceDialog({ isOpen, onClose, session, players, onAttendanceUpdate }: AttendanceDialogProps) {
   const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({})
@@ -42,9 +41,6 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
-
-  // Safely handle players array
-  const safePlayersArray = players || []
 
   const handleAttendanceChange = (playerId: string, status: AttendanceStatus) => {
     setAttendance((prev) => ({
@@ -59,33 +55,37 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
     canvas.width = 400
     canvas.height = 300
     const ctx = canvas.getContext("2d")
+
     if (ctx) {
+      // Create a simple placeholder image
       ctx.fillStyle = "#f0f0f0"
       ctx.fillRect(0, 0, 400, 300)
-      ctx.fillStyle = "#333"
+      ctx.fillStyle = "#666"
       ctx.font = "20px Arial"
       ctx.textAlign = "center"
-      ctx.fillText("Group Photo Taken", 200, 150)
+      ctx.fillText("Session Photo", 200, 150)
       ctx.fillText(new Date().toLocaleString(), 200, 180)
-      setPhoto(canvas.toDataURL())
+
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.8)
+      setPhoto(dataUrl)
+
+      toast({
+        title: "Photo captured",
+        description: "Session photo has been captured successfully",
+      })
     }
   }
 
   const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast({
-          title: "File too large",
-          description: "Please select a photo smaller than 5MB",
-          variant: "destructive",
-        })
-        return
-      }
-
       const reader = new FileReader()
       reader.onload = (e) => {
         setPhoto(e.target?.result as string)
+        toast({
+          title: "Photo uploaded",
+          description: "Session photo has been uploaded successfully",
+        })
       }
       reader.readAsDataURL(file)
     }
@@ -95,7 +95,9 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
     setIsSubmitting(true)
 
     try {
+      // Submit attendance data
       const attendanceData = Object.entries(attendance).map(([playerId, status]) => ({
+        sessionId: session.id,
         playerId,
         status,
       }))
@@ -106,30 +108,29 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sessionId: session.id,
-          attendanceData,
-          photo,
+          attendance: attendanceData,
+          photo: photo,
         }),
       })
-
-      const result = await response.json()
 
       if (response.ok) {
         toast({
           title: "Success",
-          description: "Attendance recorded successfully",
+          description: "Attendance has been recorded successfully",
         })
         onAttendanceUpdate()
         onClose()
-        resetForm()
+        // Reset form
+        setAttendance({})
+        setPhoto(null)
       } else {
-        throw new Error(result.error || "Failed to record attendance")
+        throw new Error("Failed to submit attendance")
       }
     } catch (error) {
       console.error("Attendance submission error:", error)
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to record attendance",
+        description: "Failed to record attendance. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -137,188 +138,166 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
     }
   }
 
-  const resetForm = () => {
-    setAttendance({})
-    setPhoto(null)
-  }
-
-  const getAttendanceCount = () => {
+  const getAttendanceStats = () => {
     const statuses = Object.values(attendance)
     return {
-      present: statuses.filter((s) => s === "present_regular").length,
-      complimentary: statuses.filter((s) => s === "present_complimentary").length,
+      present: statuses.filter((s) => s === "present_regular" || s === "present_complimentary").length,
       absent: statuses.filter((s) => s === "absent").length,
+      unmarked: players.length - statuses.filter((s) => s !== null).length,
     }
   }
 
-  const counts = getAttendanceCount()
-  const totalMarked = Object.keys(attendance).length
-  const totalPlayers = safePlayersArray.length
+  const stats = getAttendanceStats()
+  const canSubmit = Object.keys(attendance).length === players.length
 
-  const canUseComplimentary = (player: Player) => {
-    return player.complimentarySessions < 3
-  }
-
-  if (totalPlayers === 0) {
-    return (
-      <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>No Players Registered</DialogTitle>
-            <DialogDescription>There are no players registered for this session.</DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end">
-            <Button onClick={onClose}>Close</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    )
+  if (!session) {
+    return null
   }
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
             Mark Attendance - {session.timeSlot.charAt(0).toUpperCase() + session.timeSlot.slice(1)} Session
           </DialogTitle>
           <DialogDescription>
-            {session.ageGroup} • {new Date(session.date).toLocaleDateString()}
+            {session.ageGroup || "Unknown Age Group"} • {new Date(session.date).toLocaleDateString()}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Progress Indicator */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold">Progress</h3>
-                <Badge variant={totalMarked === totalPlayers ? "default" : "secondary"}>
-                  {totalMarked}/{totalPlayers} marked
-                </Badge>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${totalPlayers > 0 ? (totalMarked / totalPlayers) * 100 : 0}%` }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Photo Section */}
           <Card>
             <CardContent className="p-4">
-              <h3 className="font-semibold mb-3">Group Photo</h3>
-              {photo ? (
-                <div className="space-y-3">
+              <h3 className="font-medium mb-3">Session Photo</h3>
+              <div className="flex gap-2 mb-3">
+                <Button variant="outline" onClick={handlePhotoCapture}>
+                  <Camera className="h-4 w-4 mr-2" />
+                  Take Photo
+                </Button>
+                <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Photo
+                </Button>
+              </div>
+
+              {photo && (
+                <div className="mt-3">
                   <img
                     src={photo || "/placeholder.svg"}
-                    alt="Group photo"
-                    className="w-full max-w-md h-48 object-cover rounded-lg mx-auto"
+                    alt="Session photo"
+                    className="max-w-full h-32 object-cover rounded-lg border"
                   />
-                  <Button variant="outline" onClick={() => setPhoto(null)} className="w-full">
-                    Remove Photo
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <Button onClick={handlePhotoCapture} className="flex-1">
-                    <Camera className="h-4 w-4 mr-2" />
-                    Take Photo
-                  </Button>
-                  <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="flex-1">
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Photo
-                  </Button>
                 </div>
               )}
+
               <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
             </CardContent>
           </Card>
 
-          {/* Attendance Summary */}
-          <div className="flex gap-4 text-sm">
-            <Badge variant="default">Present: {counts.present}</Badge>
-            <Badge variant="secondary">Complimentary: {counts.complimentary}</Badge>
-            <Badge variant="destructive">Absent: {counts.absent}</Badge>
+          {/* Attendance Stats */}
+          <div className="grid grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4 text-center">
+                <div className="text-2xl font-bold text-green-600">{stats.present}</div>
+                <div className="text-sm text-muted-foreground">Present</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 text-center">
+                <div className="text-2xl font-bold text-red-600">{stats.absent}</div>
+                <div className="text-sm text-muted-foreground">Absent</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 text-center">
+                <div className="text-2xl font-bold text-orange-600">{stats.unmarked}</div>
+                <div className="text-sm text-muted-foreground">Unmarked</div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Player List */}
-          <div className="grid gap-3">
-            {safePlayersArray.map((player) => {
-              const attendanceRate =
-                player.attendedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
-              const isLowAttendance = attendanceRate < 70
+          <div>
+            <h3 className="font-medium mb-3">Players ({players.length})</h3>
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {players.map((player) => {
+                const playerAttendance = attendance[player.id]
+                const attendanceRate =
+                  player.bookedSessions > 0 ? Math.round((player.attendedSessions / player.bookedSessions) * 100) : 0
+                const isLowAttendance = attendanceRate < 70
+                const canUseComplimentary = player.complimentarySessions < 3
 
-              return (
-                <Card key={player.id} className={isLowAttendance ? "border-amber-300" : ""}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-medium">{player.name}</h4>
-                          {isLowAttendance && (
-                            <Badge variant="destructive" className="text-xs">
-                              Low Attendance
-                            </Badge>
-                          )}
+                return (
+                  <Card key={player.id} className={`${isLowAttendance ? "border-orange-200 bg-orange-50" : ""}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-medium">{player.name}</h4>
+                            {isLowAttendance && <AlertCircle className="h-4 w-4 text-orange-500" />}
+                          </div>
+                          <div className="flex gap-4 text-sm text-muted-foreground mt-1">
+                            <span>
+                              Attended: {player.attendedSessions}/{player.bookedSessions}
+                            </span>
+                            <span>Rate: {attendanceRate}%</span>
+                            <span>Complimentary: {player.complimentarySessions}/3</span>
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          Sessions: {player.attendedSessions}/{player.bookedSessions} • Complimentary:{" "}
-                          {player.complimentarySessions}/3 • Rate: {Math.round(attendanceRate)}%
-                        </p>
+
+                        <div className="flex gap-2">
+                          <Button
+                            variant={playerAttendance === "present_regular" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => handleAttendanceChange(player.id, "present_regular")}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Present
+                          </Button>
+
+                          <Button
+                            variant={playerAttendance === "present_complimentary" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => handleAttendanceChange(player.id, "present_complimentary")}
+                            disabled={!canUseComplimentary}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Complimentary
+                          </Button>
+
+                          <Button
+                            variant={playerAttendance === "absent" ? "destructive" : "outline"}
+                            size="sm"
+                            onClick={() => handleAttendanceChange(player.id, "absent")}
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            Absent
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant={attendance[player.id] === "present_regular" ? "default" : "outline"}
-                          onClick={() => handleAttendanceChange(player.id, "present_regular")}
-                        >
-                          <Check className="h-4 w-4 mr-1" />
-                          Present
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={attendance[player.id] === "present_complimentary" ? "secondary" : "outline"}
-                          onClick={() => handleAttendanceChange(player.id, "present_complimentary")}
-                          disabled={!canUseComplimentary(player)}
-                          title={!canUseComplimentary(player) ? "Complimentary sessions exhausted" : ""}
-                        >
-                          <Gift className="h-4 w-4 mr-1" />
-                          Comp
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={attendance[player.id] === "absent" ? "destructive" : "outline"}
-                          onClick={() => handleAttendanceChange(player.id, "absent")}
-                        >
-                          <X className="h-4 w-4 mr-1" />
-                          Absent
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
           </div>
 
-          {/* Submit Button */}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose} className="flex-1 bg-transparent">
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting || totalMarked === 0} className="flex-1">
-              {isSubmitting ? (
-                "Recording..."
-              ) : (
-                <>
-                  <Save className="h-4 w-4 mr-2" />
-                  Record Attendance ({totalMarked}/{totalPlayers})
-                </>
-              )}
-            </Button>
+          {/* Submit Section */}
+          <div className="flex justify-between items-center pt-4 border-t">
+            <div className="text-sm text-muted-foreground">
+              {canSubmit ? "All players marked" : `${stats.unmarked} players remaining`}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button onClick={handleSubmit} disabled={!canSubmit || isSubmitting}>
+                {isSubmitting ? "Submitting..." : "Submit Attendance"}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
