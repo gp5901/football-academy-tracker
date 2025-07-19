@@ -7,16 +7,13 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { SessionCard } from "@/components/session-card"
 import { PlayerStats } from "@/components/player-stats"
-import { CSVExportButton } from "@/components/csv-export-button"
 import { useToast } from "@/hooks/use-toast"
-import { LogOut, Calendar, Users, TrendingUp } from "lucide-react"
+import { LogOut, Calendar, Users, TrendingUp, Download } from "lucide-react"
 
 interface Coach {
   id: string
   username: string
-  name: string
   ageGroup: string
-  createdAt: Date
 }
 
 interface Session {
@@ -33,7 +30,6 @@ interface Player {
   bookedSessions: number
   attendedSessions: number
   complimentarySessions: number
-  joinDate: Date
 }
 
 interface DashboardData {
@@ -98,6 +94,37 @@ export default function Dashboard() {
     })
   }
 
+  const exportAttendanceData = async () => {
+    try {
+      const response = await fetch("/api/attendance/export")
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `attendance-${new Date().toISOString().split("T")[0]}.csv`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+
+        toast({
+          title: "Success",
+          description: "Attendance data exported successfully",
+        })
+      } else {
+        throw new Error("Failed to export data")
+      }
+    } catch (error) {
+      console.error("Export error:", error)
+      toast({
+        title: "Error",
+        description: "Failed to export attendance data",
+        variant: "destructive",
+      })
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -151,13 +178,14 @@ export default function Dashboard() {
           <div className="flex justify-between items-center h-16">
             <div>
               <h1 className="text-xl font-semibold text-gray-900">Football Academy Dashboard</h1>
-              <p className="text-sm text-gray-600">
-                Welcome back, Coach {data.coach?.name || data.coach?.username || "Unknown"}
-              </p>
+              <p className="text-sm text-gray-600">Welcome back, Coach {data.coach?.username || "Unknown"}</p>
             </div>
             <div className="flex items-center gap-4">
               <Badge variant="secondary">{data.coach?.ageGroup || "Unknown"}</Badge>
-              <CSVExportButton coach={data.coach} players={data.players || []} />
+              <Button variant="outline" size="sm" onClick={exportAttendanceData}>
+                <Download className="h-4 w-4 mr-2" />
+                Export Data
+              </Button>
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 <LogOut className="h-4 w-4 mr-2" />
                 Logout

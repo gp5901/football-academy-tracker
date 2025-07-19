@@ -1,3 +1,4 @@
+// Custom error classes for proper error handling
 export class BusinessError extends Error {
   constructor(
     message: string,
@@ -11,7 +12,7 @@ export class BusinessError extends Error {
 export class ValidationError extends Error {
   constructor(
     message: string,
-    public field?: string,
+    public details?: any,
   ) {
     super(message)
     this.name = "ValidationError"
@@ -28,7 +29,7 @@ export class ConcurrencyError extends Error {
 export class ServiceError extends Error {
   constructor(
     message: string,
-    public service?: string,
+    public originalError?: Error,
   ) {
     super(message)
     this.name = "ServiceError"

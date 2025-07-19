@@ -1,44 +1,41 @@
-export interface Coach {
+export type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"
+
+export interface AttendanceRecord {
   id: string
-  username: string
-  name: string
-  ageGroup: string
+  sessionId: string
+  playerId: string
+  status: AttendanceStatus
+  photoUrl?: string
+  version: number
+  timestamp: Date
   createdAt: Date
+  updatedAt: Date
 }
 
 export interface Player {
   id: string
   name: string
-  ageGroup: string
-  bookedSessions: number
-  attendedSessions: number
-  complimentarySessions: number
+  ageGroupId: string
+  monthlySessionsBooked: number
   joinDate: Date
+  isActive: boolean
 }
 
 export interface Session {
   id: string
   date: Date
   timeSlot: "morning" | "evening"
-  ageGroup: string
+  ageGroupId: string
   coachId: string
   photoUrl?: string
+  isActive: boolean
 }
 
-export interface AttendanceRecord {
+export interface Coach {
   id: string
-  sessionId: string
-  playerId: string
-  status: "present_regular" | "present_complimentary" | "absent"
-  timestamp: Date
-  photoUrl?: string
-  version: number
+  username: string
+  name: string
+  email: string
+  ageGroupId: string
+  isActive: boolean
 }
-
-export interface BulkAttendanceResult {
-  successCount: number
-  records: AttendanceRecord[]
-  timestamp: Date
-}
-
-export type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"
