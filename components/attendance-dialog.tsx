@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
-import { Camera, Upload, Check, X, Gift } from "lucide-react"
+import { Camera, Upload, Check, X, Gift, Save } from "lucide-react"
 
 interface Session {
   id: string
@@ -34,7 +34,7 @@ interface AttendanceDialogProps {
   onAttendanceUpdate: () => void
 }
 
-type AttendanceStatus = "present" | "complimentary" | "absent" | null
+type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"
 
 export function AttendanceDialog({ isOpen, onClose, session, players, onAttendanceUpdate }: AttendanceDialogProps) {
   const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({})
@@ -42,6 +42,9 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
+
+  // Safely handle players array
+  const safePlayersArray = players || []
 
   const handleAttendanceChange = (playerId: string, status: AttendanceStatus) => {
     setAttendance((prev) => ({
@@ -51,8 +54,7 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
   }
 
   const handlePhotoCapture = () => {
-    // In a real app, this would open the camera
-    // For demo purposes, we'll simulate taking a photo
+    // Simulate camera capture
     const canvas = document.createElement("canvas")
     canvas.width = 400
     canvas.height = 300
@@ -72,6 +74,15 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
   const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "Please select a photo smaller than 5MB",
+          variant: "destructive",
+        })
+        return
+      }
+
       const reader = new FileReader()
       reader.onload = (e) => {
         setPhoto(e.target?.result as string)
@@ -84,6 +95,11 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
     setIsSubmitting(true)
 
     try {
+      const attendanceData = Object.entries(attendance).map(([playerId, status]) => ({
+        playerId,
+        status,
+      }))
+
       const response = await fetch("/api/attendance", {
         method: "POST",
         headers: {
@@ -91,27 +107,29 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
         },
         body: JSON.stringify({
           sessionId: session.id,
-          attendance,
+          attendanceData,
           photo,
         }),
       })
 
+      const result = await response.json()
+
       if (response.ok) {
         toast({
-          title: "Attendance recorded",
-          description: "Player attendance has been successfully recorded.",
+          title: "Success",
+          description: "Attendance recorded successfully",
         })
         onAttendanceUpdate()
         onClose()
-        setAttendance({})
-        setPhoto(null)
+        resetForm()
       } else {
-        throw new Error("Failed to record attendance")
+        throw new Error(result.error || "Failed to record attendance")
       }
     } catch (error) {
+      console.error("Attendance submission error:", error)
       toast({
         title: "Error",
-        description: "Failed to record attendance. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to record attendance",
         variant: "destructive",
       })
     } finally {
@@ -119,16 +137,43 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
     }
   }
 
+  const resetForm = () => {
+    setAttendance({})
+    setPhoto(null)
+  }
+
   const getAttendanceCount = () => {
     const statuses = Object.values(attendance)
     return {
-      present: statuses.filter((s) => s === "present").length,
-      complimentary: statuses.filter((s) => s === "complimentary").length,
+      present: statuses.filter((s) => s === "present_regular").length,
+      complimentary: statuses.filter((s) => s === "present_complimentary").length,
       absent: statuses.filter((s) => s === "absent").length,
     }
   }
 
   const counts = getAttendanceCount()
+  const totalMarked = Object.keys(attendance).length
+  const totalPlayers = safePlayersArray.length
+
+  const canUseComplimentary = (player: Player) => {
+    return player.complimentarySessions < 3
+  }
+
+  if (totalPlayers === 0) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>No Players Registered</DialogTitle>
+            <DialogDescription>There are no players registered for this session.</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    )
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -143,6 +188,24 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
         </DialogHeader>
 
         <div className="space-y-6">
+          {/* Progress Indicator */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold">Progress</h3>
+                <Badge variant={totalMarked === totalPlayers ? "default" : "secondary"}>
+                  {totalMarked}/{totalPlayers} marked
+                </Badge>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${totalPlayers > 0 ? (totalMarked / totalPlayers) * 100 : 0}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Photo Section */}
           <Card>
             <CardContent className="p-4">
@@ -183,48 +246,62 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
 
           {/* Player List */}
           <div className="grid gap-3">
-            {players.map((player) => (
-              <Card key={player.id}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-medium">{player.name}</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Sessions: {player.attendedSessions}/{player.bookedSessions} • Complimentary:{" "}
-                        {player.complimentarySessions}/3
-                      </p>
+            {safePlayersArray.map((player) => {
+              const attendanceRate =
+                player.attendedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
+              const isLowAttendance = attendanceRate < 70
+
+              return (
+                <Card key={player.id} className={isLowAttendance ? "border-amber-300" : ""}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-medium">{player.name}</h4>
+                          {isLowAttendance && (
+                            <Badge variant="destructive" className="text-xs">
+                              Low Attendance
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Sessions: {player.attendedSessions}/{player.bookedSessions} • Complimentary:{" "}
+                          {player.complimentarySessions}/3 • Rate: {Math.round(attendanceRate)}%
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant={attendance[player.id] === "present_regular" ? "default" : "outline"}
+                          onClick={() => handleAttendanceChange(player.id, "present_regular")}
+                        >
+                          <Check className="h-4 w-4 mr-1" />
+                          Present
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={attendance[player.id] === "present_complimentary" ? "secondary" : "outline"}
+                          onClick={() => handleAttendanceChange(player.id, "present_complimentary")}
+                          disabled={!canUseComplimentary(player)}
+                          title={!canUseComplimentary(player) ? "Complimentary sessions exhausted" : ""}
+                        >
+                          <Gift className="h-4 w-4 mr-1" />
+                          Comp
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={attendance[player.id] === "absent" ? "destructive" : "outline"}
+                          onClick={() => handleAttendanceChange(player.id, "absent")}
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Absent
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant={attendance[player.id] === "present" ? "default" : "outline"}
-                        onClick={() => handleAttendanceChange(player.id, "present")}
-                      >
-                        <Check className="h-4 w-4 mr-1" />
-                        Present
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={attendance[player.id] === "complimentary" ? "secondary" : "outline"}
-                        onClick={() => handleAttendanceChange(player.id, "complimentary")}
-                        disabled={player.complimentarySessions >= 3}
-                      >
-                        <Gift className="h-4 w-4 mr-1" />
-                        Comp
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={attendance[player.id] === "absent" ? "destructive" : "outline"}
-                        onClick={() => handleAttendanceChange(player.id, "absent")}
-                      >
-                        <X className="h-4 w-4 mr-1" />
-                        Absent
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              )
+            })}
           </div>
 
           {/* Submit Button */}
@@ -232,12 +309,15 @@ export function AttendanceDialog({ isOpen, onClose, session, players, onAttendan
             <Button variant="outline" onClick={onClose} className="flex-1 bg-transparent">
               Cancel
             </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={isSubmitting || Object.keys(attendance).length === 0}
-              className="flex-1"
-            >
-              {isSubmitting ? "Recording..." : "Record Attendance"}
+            <Button onClick={handleSubmit} disabled={isSubmitting || totalMarked === 0} className="flex-1">
+              {isSubmitting ? (
+                "Recording..."
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Record Attendance ({totalMarked}/{totalPlayers})
+                </>
+              )}
             </Button>
           </div>
         </div>
