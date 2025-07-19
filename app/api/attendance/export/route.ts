@@ -1,124 +1,50 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
-import { jwtVerify } from "jose"
-import { exportRequestSchema } from "../../../../lib/validation/schemas"
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || "your-secret-key")
-
-async function validateJWT(request: NextRequest) {
-  try {
-    const cookieStore = await cookies()
-    const token = cookieStore.get("auth-token")?.value
-
-    if (!token) {
-      return null
-    }
-
-    const { payload } = await jwtVerify(token, JWT_SECRET)
-    return payload as any
-  } catch {
-    return null
-  }
-}
+import { verifyJWT } from "@/lib/auth/jwt"
+import { mockDb } from "@/lib/database/connection"
+import { csvExportService } from "@/lib/services/csv-export-service"
 
 export async function GET(request: NextRequest) {
   try {
-    const coach = await validateJWT(request)
-    if (!coach) {
+    // Authenticate user
+    const authResult = await verifyJWT(request)
+    if (!authResult.success) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { searchParams } = new URL(request.url)
-    const queryParams = {
-      startDate: searchParams.get("startDate") || undefined,
-      endDate: searchParams.get("endDate") || undefined,
-      format: searchParams.get("format") || "csv",
+    const coach = authResult.payload
+
+    // Get coach data
+    const coaches = mockDb.getCoaches()
+    const coachData = coaches.find((c) => c.id === coach.coachId)
+
+    if (!coachData) {
+      return NextResponse.json({ error: "Coach not found" }, { status: 404 })
     }
 
-    const validatedParams = exportRequestSchema.parse(queryParams)
+    // Get players for coach's age group
+    const players = mockDb.getPlayers().filter((p) => p.ageGroup === coachData.ageGroup)
 
-    // Mock attendance data for export
-    const mockAttendanceData = [
-      {
-        playerName: "Alex Johnson",
-        ageGroup: "U-12",
-        bookedSessions: 12,
-        attendedSessions: 10,
-        complimentarySessions: 2,
-        attendanceRate: 83.3,
-        status: "Good",
-      },
-      {
-        playerName: "Sam Wilson",
-        ageGroup: "U-12",
-        bookedSessions: 12,
-        attendedSessions: 8,
-        complimentarySessions: 1,
-        attendanceRate: 66.7,
-        status: "Needs Improvement",
-      },
-      {
-        playerName: "Jordan Brown",
-        ageGroup: "U-16",
-        bookedSessions: 12,
-        attendedSessions: 11,
-        complimentarySessions: 0,
-        attendanceRate: 91.7,
-        status: "Excellent",
-      },
-    ]
+    // Get sessions for coach's age group
+    const sessions = mockDb.getSessions().filter((s) => s.ageGroup === coachData.ageGroup)
 
-    if (validatedParams.format === "csv") {
-      // Generate CSV
-      const headers = [
-        "Player Name",
-        "Age Group",
-        "Booked Sessions",
-        "Attended Sessions",
-        "Complimentary Sessions",
-        "Attendance Rate (%)",
-        "Status",
-      ]
+    // Generate CSV content
+    const csvContent = csvExportService.generateAttendanceCSV({
+      coach: coachData,
+      players,
+      sessions,
+      reportDate: new Date(),
+    })
 
-      const csvRows = [
-        headers.join(","),
-        ...mockAttendanceData.map((row) =>
-          [
-            `"${row.playerName}"`,
-            `"${row.ageGroup}"`,
-            row.bookedSessions,
-            row.attendedSessions,
-            row.complimentarySessions,
-            row.attendanceRate,
-            `"${row.status}"`,
-          ].join(","),
-        ),
-      ]
-
-      const csvContent = csvRows.join("\n")
-      const fileName = `attendance-report-${new Date().toISOString().split("T")[0]}.csv`
-
-      return new NextResponse(csvContent, {
-        headers: {
-          "Content-Type": "text/csv",
-          "Content-Disposition": `attachment; filename="${fileName}"`,
-        },
-      })
-    }
-
-    // Return JSON format
-    return NextResponse.json({
-      data: mockAttendanceData,
-      metadata: {
-        exportDate: new Date().toISOString(),
-        coachId: coach.coachId,
-        totalPlayers: mockAttendanceData.length,
-        averageAttendanceRate:
-          mockAttendanceData.reduce((sum, player) => sum + player.attendanceRate, 0) / mockAttendanceData.length,
+    // Return CSV as downloadable file
+    return new NextResponse(csvContent, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": `attachment; filename="attendance-report-${new Date().toISOString().split("T")[0]}.csv"`,
       },
     })
-  } catch (error: any) {
-    console.error("Export failed:", error)
-    return NextResponse.json({ error: "Export failed" }, { status: 500 })
+  } catch (error) {
+    console.error("Export error:", error)
+    return NextResponse.json({ error: "Failed to export attendance data" }, { status: 500 })
   }
 }

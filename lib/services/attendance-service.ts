@@ -1,125 +1,175 @@
-import type { PostgresAttendanceRepository } from "../repositories/attendance-repository"
-import type { PhotoStorageService } from "./photo-storage-service"
-import { BusinessError } from "../errors/custom-errors"
-import { attendanceInputSchema } from "../validation/schemas"
-import type { AttendanceRecord, AttendanceStatus, BulkAttendanceResult } from "../types/attendance"
-
-interface MockPool {
-  connect: () => Promise<{
-    query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number }>
-    release: () => void
-  }>
-}
+import { mockDb } from "../database/connection"
+import { BusinessError, ValidationError } from "../errors/custom-errors"
+import { attendanceInputSchema, bulkAttendanceSchema } from "../validation/schemas"
+import type { AttendanceRecord, BulkAttendanceResult, AttendanceStatus } from "../types/attendance"
 
 export class AttendanceService {
-  constructor(
-    private attendanceRepo: PostgresAttendanceRepository,
-    private dbPool: MockPool,
-    private photoStorage: PhotoStorageService,
-  ) {}
+  constructor() {}
 
+  /**
+   * Records attendance with business rule validation
+   */
   async recordAttendanceAtomic(
     sessionId: string,
     playerId: string,
     status: AttendanceStatus,
     photoBuffer?: Buffer,
   ): Promise<AttendanceRecord> {
-    // Input validation with Zod schema
+    // Input validation
     const validatedInput = attendanceInputSchema.parse({
       sessionId,
       playerId,
       status,
     })
 
-    const client = await this.dbPool.connect()
-
     try {
-      // Begin transaction
-      await client.query("BEGIN")
-
-      // Check for existing record with optimistic locking
-      const existingRecord = await this.attendanceRepo.findBySessionAndPlayer(sessionId, playerId, { forUpdate: true })
-
-      // Handle photo upload asynchronously
-      let photoUrl = null
-      if (photoBuffer) {
-        try {
-          photoUrl = await this.photoStorage.uploadAsync(photoBuffer)
-        } catch (error) {
-          console.warn("Photo upload failed, continuing with attendance recording:", error)
+      // Check complimentary session limit
+      if (status === "present_complimentary") {
+        const complimentaryCount = await this.getMonthlyComplimentaryCount(playerId)
+        if (complimentaryCount >= 3) {
+          throw new BusinessError("Player has exceeded monthly complimentary session limit (3)")
         }
       }
 
-      let result: AttendanceRecord
+      // Check for existing record (idempotency)
+      const existingRecord = this.findExistingAttendance(sessionId, playerId)
+
       if (existingRecord) {
-        // Idempotent update
-        result = await this.attendanceRepo.updateWithVersion(
-          existingRecord.id,
-          { status, photoUrl },
-          existingRecord.version,
-        )
+        // Update existing record
+        mockDb.updateAttendance(existingRecord.id, { status })
+        return {
+          ...existingRecord,
+          status,
+          version: existingRecord.version + 1,
+        }
       } else {
-        // New attendance record
-        result = await this.attendanceRepo.create({
+        // Create new record
+        const newRecord = {
           sessionId: validatedInput.sessionId,
           playerId: validatedInput.playerId,
           status: validatedInput.status,
-          photoUrl,
+          photoUrl: photoBuffer ? "mock-photo-url" : undefined,
+        }
+
+        mockDb.addAttendance(newRecord)
+
+        return {
+          id: `attendance-${Date.now()}`,
+          ...newRecord,
           timestamp: new Date(),
-        })
+          version: 1,
+        }
       }
-
-      await client.query("COMMIT")
-      return result
-    } catch (error: any) {
-      await client.query("ROLLBACK")
-
-      // Transform database constraint violations into business errors
-      if (error.message?.includes("complimentary session limit")) {
-        throw new BusinessError("Complimentary session limit exceeded")
+    } catch (error) {
+      if (error instanceof BusinessError) {
+        throw error
       }
-      throw error
-    } finally {
-      client.release()
+      throw new Error(`Failed to record attendance: ${error.message}`)
     }
   }
 
+  /**
+   * Bulk attendance recording for performance optimization
+   */
   async recordBulkAttendance(
     sessionId: string,
     attendanceData: Map<string, AttendanceStatus>,
     photo?: Buffer,
   ): Promise<BulkAttendanceResult> {
-    // Convert Map to array of records
-    const records = Array.from(attendanceData.entries()).map(([playerId, status]) => ({
+    const validatedData = bulkAttendanceSchema.parse({
       sessionId,
-      playerId,
-      status,
-      timestamp: new Date(),
-      photoUrl: null as string | null,
-    }))
+      attendanceData: Array.from(attendanceData.entries()),
+    })
 
-    // Handle photo upload if provided
-    if (photo) {
-      try {
-        const photoUrl = await this.photoStorage.uploadAsync(photo)
-        records.forEach((record) => {
-          record.photoUrl = photoUrl
-        })
-      } catch (error) {
-        console.warn("Photo upload failed, continuing with attendance recording:", error)
+    const results: AttendanceRecord[] = []
+    const errors: Array<{ playerId: string; error: string }> = []
+
+    // Process in batches to prevent memory issues
+    const batchSize = 50
+    const entries = Array.from(attendanceData.entries())
+
+    for (let i = 0; i < entries.length; i += batchSize) {
+      const batch = entries.slice(i, i + batchSize)
+
+      for (const [playerId, status] of batch) {
+        try {
+          const result = await this.recordAttendanceAtomic(sessionId, playerId, status, photo)
+          results.push(result)
+        } catch (error) {
+          errors.push({
+            playerId,
+            error: error.message,
+          })
+        }
       }
     }
 
-    // Use repository's bulk create method
-    return await this.attendanceRepo.bulkCreate(records)
+    return {
+      successCount: results.length,
+      records: results,
+      timestamp: new Date(),
+      errors: errors.length > 0 ? errors : undefined,
+    }
   }
 
-  async getPlayerMonthlyStats(playerId: string, month: number, year: number) {
-    const complimentaryCount = await this.attendanceRepo.getMonthlyComplimentaryCount(playerId, month, year)
+  /**
+   * Get monthly complimentary session count for a player
+   */
+  private async getMonthlyComplimentaryCount(playerId: string): Promise<number> {
+    const currentMonth = new Date().getMonth()
+    const currentYear = new Date().getFullYear()
+
+    const attendance = mockDb.getAttendance()
+    const sessions = mockDb.getSessions()
+
+    return attendance.filter((a) => {
+      if (a.playerId !== playerId || a.status !== "present_complimentary") {
+        return false
+      }
+
+      const session = sessions.find((s) => s.id === a.sessionId)
+      if (!session) return false
+
+      const sessionDate = new Date(session.date)
+      return sessionDate.getMonth() === currentMonth && sessionDate.getFullYear() === currentYear
+    }).length
+  }
+
+  /**
+   * Find existing attendance record
+   */
+  private findExistingAttendance(sessionId: string, playerId: string) {
+    const attendance = mockDb.getAttendance()
+    return attendance.find((a) => a.sessionId === sessionId && a.playerId === playerId)
+  }
+
+  /**
+   * Get player attendance statistics
+   */
+  async getPlayerStats(playerId: string) {
+    const attendance = mockDb.getAttendance().filter((a) => a.playerId === playerId)
+    const player = mockDb.getPlayers().find((p) => p.id === playerId)
+
+    if (!player) {
+      throw new ValidationError("Player not found")
+    }
+
+    const totalAttended = attendance.filter((a) => a.status !== "absent").length
+    const complimentaryUsed = attendance.filter((a) => a.status === "present_complimentary").length
 
     return {
-      complimentarySessions: complimentaryCount,
-      remainingComplimentary: Math.max(0, 3 - complimentaryCount),
+      totalSessions: player.bookedSessions,
+      attendedSessions: totalAttended,
+      complimentarySessions: complimentaryUsed,
+      attendanceRate: player.bookedSessions > 0 ? Math.round((totalAttended / player.bookedSessions) * 100) : 0,
+      status:
+        totalAttended / player.bookedSessions >= 0.8
+          ? "good"
+          : totalAttended / player.bookedSessions >= 0.6
+            ? "warning"
+            : "critical",
     }
   }
 }
+
+export const attendanceService = new AttendanceService()
