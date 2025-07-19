@@ -1,18 +1,13 @@
 import { z } from "zod"
 
-export const attendanceStatusSchema = z.enum(["present_regular", "present_complimentary", "absent"])
-
-export const attendanceRecordSchema = z.object({
-  sessionId: z.string().uuid("Invalid session ID"),
-  playerId: z.string().uuid("Invalid player ID"),
-  status: attendanceStatusSchema,
-  photoUrl: z.string().url().optional(),
-  timestamp: z.date().default(() => new Date()),
-})
-
-export const bulkAttendanceSchema = z.object({
-  sessionId: z.string().uuid("Invalid session ID"),
-  attendance: z.record(z.string().uuid(), attendanceStatusSchema),
+export const attendanceRequestSchema = z.object({
+  sessionId: z.string().min(1, "Session ID is required"),
+  attendance: z.record(
+    z.string().min(1, "Player ID is required"),
+    z.enum(["present_regular", "present_complimentary", "absent"], {
+      errorMap: () => ({ message: "Invalid attendance status" }),
+    }),
+  ),
   photo: z.string().optional(),
 })
 

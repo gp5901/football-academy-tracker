@@ -3,12 +3,11 @@
 import type React from "react"
 
 import { useState } from "react"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
-import { Camera, Upload, Check, X, Clock, Loader2 } from "lucide-react"
+import { Camera, Upload, Save, Loader2 } from "lucide-react"
 
 interface Player {
   id: string
@@ -17,6 +16,7 @@ interface Player {
   bookedSessions: number
   attendedSessions: number
   complimentarySessions: number
+  joinDate: Date
 }
 
 interface Session {
@@ -27,16 +27,16 @@ interface Session {
 }
 
 interface AttendanceDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  isOpen: boolean
+  onClose: () => void
   session: Session
   players: Player[]
-  onAttendanceUpdate: () => void
+  onComplete: () => void
 }
 
-type AttendanceStatus = "present_regular" | "present_complimentary" | "absent" | null
+type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"
 
-export function AttendanceDialog({ open, onOpenChange, session, players, onAttendanceUpdate }: AttendanceDialogProps) {
+export function AttendanceDialog({ isOpen, onClose, session, players, onComplete }: AttendanceDialogProps) {
   const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({})
   const [photo, setPhoto] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -50,21 +50,14 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
   }
 
   const handlePhotoCapture = () => {
-    // Simulate camera capture
-    const canvas = document.createElement("canvas")
-    canvas.width = 400
-    canvas.height = 300
-    const ctx = canvas.getContext("2d")
-    if (ctx) {
-      ctx.fillStyle = "#f0f0f0"
-      ctx.fillRect(0, 0, 400, 300)
-      ctx.fillStyle = "#333"
-      ctx.font = "16px Arial"
-      ctx.textAlign = "center"
-      ctx.fillText("Session Photo", 200, 150)
-      ctx.fillText(new Date().toLocaleString(), 200, 180)
-      setPhoto(canvas.toDataURL("image/jpeg", 0.8))
-    }
+    // Simulate photo capture
+    const mockPhotoData =
+      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+    setPhoto(mockPhotoData)
+    toast({
+      title: "Photo captured",
+      description: "Session photo has been captured successfully",
+    })
   }
 
   const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -73,6 +66,10 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
       const reader = new FileReader()
       reader.onload = (e) => {
         setPhoto(e.target?.result as string)
+        toast({
+          title: "Photo uploaded",
+          description: "Session photo has been uploaded successfully",
+        })
       }
       reader.readAsDataURL(file)
     }
@@ -82,20 +79,10 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
     try {
       setIsSubmitting(true)
 
-      // Filter out null values and only include players with attendance marked
-      const attendanceData = Object.entries(attendance).reduce(
-        (acc, [playerId, status]) => {
-          if (status !== null) {
-            acc[playerId] = status
-          }
-          return acc
-        },
-        {} as Record<string, Exclude<AttendanceStatus, null>>,
-      )
-
-      if (Object.keys(attendanceData).length === 0) {
+      // Validate that at least one attendance is marked
+      if (Object.keys(attendance).length === 0) {
         toast({
-          title: "No Attendance Marked",
+          title: "No attendance marked",
           description: "Please mark attendance for at least one player",
           variant: "destructive",
         })
@@ -109,7 +96,7 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
         },
         body: JSON.stringify({
           sessionId: session.id,
-          attendance: attendanceData,
+          attendance,
           photo,
         }),
       })
@@ -120,11 +107,7 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
           title: "Success",
           description: `Attendance recorded for ${result.recordedCount} players`,
         })
-        onAttendanceUpdate()
-        onOpenChange(false)
-        // Reset form
-        setAttendance({})
-        setPhoto(null)
+        onComplete()
       } else {
         const error = await response.json()
         throw new Error(error.error || "Failed to record attendance")
@@ -141,7 +124,7 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
     }
   }
 
-  const getStatusColor = (status: AttendanceStatus) => {
+  const getAttendanceColor = (status: AttendanceStatus) => {
     switch (status) {
       case "present_regular":
         return "bg-green-100 text-green-800 border-green-200"
@@ -154,91 +137,76 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
     }
   }
 
-  const getStatusIcon = (status: AttendanceStatus) => {
+  const getStatusLabel = (status: AttendanceStatus) => {
     switch (status) {
       case "present_regular":
-        return <Check className="h-3 w-3" />
+        return "Present"
       case "present_complimentary":
-        return <Clock className="h-3 w-3" />
+        return "Present (Comp)"
       case "absent":
-        return <X className="h-3 w-3" />
+        return "Absent"
       default:
-        return null
+        return "Not marked"
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Mark Attendance</DialogTitle>
           <DialogDescription>
-            {session.ageGroup} • {session.timeSlot} • {new Date(session.date).toLocaleDateString()}
+            {session.ageGroup} • {new Date(session.date).toLocaleDateString()} • {session.timeSlot}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
           {/* Photo Section */}
-          <Card>
-            <CardContent className="p-4">
-              <h3 className="font-medium mb-3">Session Photo</h3>
-              <div className="flex gap-3 mb-3">
-                <Button variant="outline" size="sm" onClick={handlePhotoCapture}>
-                  <Camera className="h-4 w-4 mr-2" />
-                  Take Photo
-                </Button>
-                <Button variant="outline" size="sm" asChild>
-                  <label>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Photo
-                    <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
-                  </label>
-                </Button>
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium">Session Photo</h3>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handlePhotoCapture}>
+                <Camera className="h-4 w-4 mr-2" />
+                Take Photo
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <label htmlFor="photo-upload" className="cursor-pointer">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Photo
+                </label>
+              </Button>
+              <input id="photo-upload" type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+            </div>
+            {photo && (
+              <div className="mt-2">
+                <img
+                  src={photo || "/placeholder.svg"}
+                  alt="Session"
+                  className="w-20 h-20 object-cover rounded border"
+                />
               </div>
-              {photo && (
-                <div className="mt-3">
-                  <img src={photo || "/placeholder.svg"} alt="Session photo" className="max-w-xs rounded-lg border" />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            )}
+          </div>
 
-          {/* Attendance Section */}
-          <div>
-            <h3 className="font-medium mb-4">Player Attendance ({players.length} players)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Players List */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium">Players ({players.length})</h3>
+            <div className="space-y-3 max-h-60 overflow-y-auto">
               {players.map((player) => (
-                <Card key={player.id} className="p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h4 className="font-medium">{player.name}</h4>
-                      <p className="text-sm text-gray-600">
-                        {player.attendedSessions}/{player.bookedSessions} sessions • {player.complimentarySessions}/3
-                        complimentary
-                      </p>
+                <div key={player.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex-1">
+                    <div className="font-medium">{player.name}</div>
+                    <div className="text-sm text-muted-foreground">
+                      Sessions: {player.attendedSessions}/{player.bookedSessions} • Complimentary:{" "}
+                      {player.complimentarySessions}/3
                     </div>
-                    {attendance[player.id] && (
-                      <Badge className={getStatusColor(attendance[player.id])}>
-                        {getStatusIcon(attendance[player.id])}
-                        <span className="ml-1">
-                          {attendance[player.id] === "present_regular"
-                            ? "Present"
-                            : attendance[player.id] === "present_complimentary"
-                              ? "Complimentary"
-                              : "Absent"}
-                        </span>
-                      </Badge>
-                    )}
                   </div>
-
-                  <div className="flex gap-2">
+                  <div className="flex gap-1">
                     <Button
                       variant={attendance[player.id] === "present_regular" ? "default" : "outline"}
                       size="sm"
                       onClick={() => handleAttendanceChange(player.id, "present_regular")}
-                      className="flex-1"
                     >
-                      <Check className="h-3 w-3 mr-1" />
                       Present
                     </Button>
                     <Button
@@ -246,39 +214,55 @@ export function AttendanceDialog({ open, onOpenChange, session, players, onAtten
                       size="sm"
                       onClick={() => handleAttendanceChange(player.id, "present_complimentary")}
                       disabled={player.complimentarySessions >= 3}
-                      className="flex-1"
                     >
-                      <Clock className="h-3 w-3 mr-1" />
-                      Comp.
+                      Comp
                     </Button>
                     <Button
                       variant={attendance[player.id] === "absent" ? "destructive" : "outline"}
                       size="sm"
                       onClick={() => handleAttendanceChange(player.id, "absent")}
-                      className="flex-1"
                     >
-                      <X className="h-3 w-3 mr-1" />
                       Absent
                     </Button>
                   </div>
-                </Card>
+                </div>
               ))}
             </div>
           </div>
 
-          {/* Submit Section */}
-          <div className="flex justify-end gap-3 pt-4 border-t">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+          {/* Summary */}
+          {Object.keys(attendance).length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">Summary</h3>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(attendance).map(([playerId, status]) => {
+                  const player = players.find((p) => p.id === playerId)
+                  return (
+                    <Badge key={playerId} className={getAttendanceColor(status)}>
+                      {player?.name}: {getStatusLabel(status)}
+                    </Badge>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>
+            <Button onClick={handleSubmit} disabled={isSubmitting || Object.keys(attendance).length === 0}>
               {isSubmitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Recording...
+                  Saving...
                 </>
               ) : (
-                "Record Attendance"
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Attendance
+                </>
               )}
             </Button>
           </div>

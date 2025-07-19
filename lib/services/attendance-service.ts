@@ -1,11 +1,10 @@
 import { mockDb } from "../database/connection"
 import { BusinessError, ValidationError } from "../errors/custom-errors"
 import type { AttendanceRecord, AttendanceStatus, BulkAttendanceResult } from "../types/attendance"
-import { attendanceRecordSchema, bulkAttendanceSchema } from "../validation/schemas"
 
 export class AttendanceService {
   /**
-   * Records attendance with business rule validation
+   * Record attendance for a single player
    */
   async recordAttendance(
     sessionId: string,
@@ -13,96 +12,108 @@ export class AttendanceService {
     status: AttendanceStatus,
     photoUrl?: string,
   ): Promise<AttendanceRecord> {
-    // Validate input
-    const validatedData = attendanceRecordSchema.parse({
-      sessionId,
-      playerId,
-      status,
-      photoUrl,
-    })
-
-    // Check complimentary session limit
+    // Validate complimentary session limit
     if (status === "present_complimentary") {
-      const currentMonth = new Date().getMonth()
-      const currentYear = new Date().getFullYear()
-
-      const existingComplimentary = mockDb.getAttendanceRecords().filter((record) => {
-        const recordDate = new Date(record.timestamp)
-        return (
-          record.playerId === playerId &&
-          record.status === "present_complimentary" &&
-          recordDate.getMonth() === currentMonth &&
-          recordDate.getFullYear() === currentYear
-        )
-      }).length
-
-      if (existingComplimentary >= 3) {
+      const complimentaryCount = this.getMonthlyComplimentaryCount(playerId)
+      if (complimentaryCount >= 3) {
         throw new BusinessError("Player has exceeded monthly complimentary session limit (3)")
       }
     }
 
     // Check for existing record (idempotency)
-    const existingRecord = mockDb
-      .getAttendanceRecords()
-      .find((record) => record.sessionId === sessionId && record.playerId === playerId)
+    const existingRecords = mockDb.getAttendanceRecords()
+    const existingRecord = existingRecords.find((r) => r.sessionId === sessionId && r.playerId === playerId)
 
     if (existingRecord) {
       // Update existing record
-      const updated = mockDb.updateAttendanceRecord(existingRecord.id, {
-        status: validatedData.status,
-        photoUrl: validatedData.photoUrl,
-        timestamp: new Date(),
-      })
+      const updated = mockDb.updateAttendanceRecord(existingRecord.id, { status, photoUrl })
       if (!updated) {
-        throw new Error("Failed to update attendance record")
+        throw new ValidationError("Failed to update attendance record")
       }
       return updated
     }
 
     // Create new record
     return mockDb.addAttendanceRecord({
-      sessionId: validatedData.sessionId,
-      playerId: validatedData.playerId,
-      status: validatedData.status,
-      photoUrl: validatedData.photoUrl,
+      sessionId,
+      playerId,
+      status,
       timestamp: new Date(),
+      photoUrl,
     })
   }
 
   /**
-   * Records bulk attendance for multiple players
+   * Record bulk attendance for multiple players
    */
   async recordBulkAttendance(
     sessionId: string,
     attendanceData: Map<string, AttendanceStatus>,
-    photoUrl?: string,
+    photo?: string,
   ): Promise<BulkAttendanceResult> {
-    const validatedData = bulkAttendanceSchema.parse({
-      sessionId,
-      attendance: Object.fromEntries(attendanceData),
-      photo: photoUrl,
-    })
-
     const results: AttendanceRecord[] = []
-    const errors: string[] = []
+    const errors: Array<{ playerId: string; error: string }> = []
 
-    for (const [playerId, status] of attendanceData) {
+    for (const [playerId, status] of attendanceData.entries()) {
       try {
-        const record = await this.recordAttendance(sessionId, playerId, status, photoUrl)
+        const record = await this.recordAttendance(sessionId, playerId, status, photo)
         results.push(record)
       } catch (error) {
-        errors.push(`Player ${playerId}: ${error instanceof Error ? error.message : "Unknown error"}`)
+        errors.push({
+          playerId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        })
       }
-    }
-
-    if (errors.length > 0 && results.length === 0) {
-      throw new ValidationError(`All attendance records failed: ${errors.join(", ")}`)
     }
 
     return {
       successCount: results.length,
       records: results,
       timestamp: new Date(),
+      errors: errors.length > 0 ? errors : undefined,
+    }
+  }
+
+  /**
+   * Get monthly complimentary session count for a player
+   */
+  private getMonthlyComplimentaryCount(playerId: string): number {
+    const currentMonth = new Date().getMonth()
+    const currentYear = new Date().getFullYear()
+
+    return mockDb.getAttendanceRecords().filter((record) => {
+      const recordDate = new Date(record.timestamp)
+      return (
+        record.playerId === playerId &&
+        record.status === "present_complimentary" &&
+        recordDate.getMonth() === currentMonth &&
+        recordDate.getFullYear() === currentYear
+      )
+    }).length
+  }
+
+  /**
+   * Get attendance statistics for a player
+   */
+  getPlayerStats(playerId: string) {
+    const records = mockDb.getAttendanceRecords().filter((r) => r.playerId === playerId)
+    const player = mockDb.getPlayers().find((p) => p.id === playerId)
+
+    if (!player) {
+      throw new ValidationError("Player not found")
+    }
+
+    const regularSessions = records.filter((r) => r.status === "present_regular").length
+    const complimentarySessions = records.filter((r) => r.status === "present_complimentary").length
+    const totalAttended = regularSessions + complimentarySessions
+
+    return {
+      playerId,
+      regularSessions,
+      complimentarySessions,
+      totalBooked: player.bookedSessions,
+      remainingComplimentary: Math.max(0, 3 - complimentarySessions),
+      attendanceRate: player.bookedSessions > 0 ? (totalAttended / player.bookedSessions) * 100 : 0,
     }
   }
 }

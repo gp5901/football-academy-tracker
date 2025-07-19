@@ -25,9 +25,12 @@ export class ConcurrencyError extends Error {
   }
 }
 
-export class AuthenticationError extends Error {
-  constructor(message: string) {
+export class ServiceError extends Error {
+  constructor(
+    message: string,
+    public service?: string,
+  ) {
     super(message)
-    this.name = "AuthenticationError"
+    this.name = "ServiceError"
   }
 }
