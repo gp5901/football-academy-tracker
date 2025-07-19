@@ -1,8 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { attendanceService } from "@/lib/services/attendance-service"
-import { attendanceRequestSchema } from "@/lib/validation/schemas"
-import { BusinessError, ValidationError } from "@/lib/errors/custom-errors"
 import { verifyJWT } from "@/lib/auth/jwt"
+import { attendanceService } from "@/lib/services/attendance-service"
+import { ValidationError, BusinessError } from "@/lib/errors/custom-errors"
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,42 +11,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const coach = authResult.payload
-
-    // Parse and validate request body
     const body = await request.json()
-    const validatedData = attendanceRequestSchema.parse(body)
+    const { sessionId, attendance, photo } = body
 
-    // Convert attendance object to Map for service
-    const attendanceMap = new Map(Object.entries(validatedData.attendance))
-
-    // Process photo if provided
-    let photoBuffer: Buffer | undefined
-    if (validatedData.photo) {
-      const base64Data = validatedData.photo.split(",")[1]
-      photoBuffer = Buffer.from(base64Data, "base64")
+    if (!sessionId || !attendance) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
+    // Convert attendance object to Map
+    const attendanceMap = new Map(Object.entries(attendance))
+
     // Record bulk attendance
-    const result = await attendanceService.recordBulkAttendance(validatedData.sessionId, attendanceMap, photoBuffer)
+    const result = await attendanceService.recordBulkAttendance(sessionId, attendanceMap, photo)
 
     return NextResponse.json({
       success: true,
       recordedCount: result.successCount,
       timestamp: result.timestamp,
-      errors: result.errors,
     })
   } catch (error) {
     console.error("Attendance recording error:", error)
 
     if (error instanceof ValidationError) {
-      return NextResponse.json({ error: "Invalid input data", details: error.message }, { status: 400 })
+      return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
     if (error instanceof BusinessError) {
       return NextResponse.json({ error: error.message }, { status: 422 })
     }
 
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json({ error: "Failed to record attendance" }, { status: 500 })
   }
 }

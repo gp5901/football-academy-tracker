@@ -14,18 +14,17 @@ export async function GET(request: NextRequest) {
     const coach = authResult.payload
 
     // Get coach data
-    const coaches = mockDb.getCoaches()
-    const coachData = coaches.find((c) => c.id === coach.coachId)
+    const coachData = mockDb.getCoachById(coach.coachId)
 
     if (!coachData) {
       return NextResponse.json({ error: "Coach not found" }, { status: 404 })
     }
 
     // Get players for coach's age group
-    const players = mockDb.getPlayers().filter((p) => p.ageGroup === coachData.ageGroup)
+    const players = mockDb.getPlayersByAgeGroup(coachData.ageGroup)
 
     // Get sessions for coach's age group
-    const sessions = mockDb.getSessions().filter((s) => s.ageGroup === coachData.ageGroup)
+    const sessions = mockDb.getSessionsByAgeGroup(coachData.ageGroup)
 
     // Generate CSV content
     const csvContent = csvExportService.generateAttendanceCSV({
@@ -40,7 +39,7 @@ export async function GET(request: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="attendance-report-${new Date().toISOString().split("T")[0]}.csv"`,
+        "Content-Disposition": `attachment; filename="attendance-report-${coachData.ageGroup}-${new Date().toISOString().split("T")[0]}.csv"`,
       },
     })
   } catch (error) {

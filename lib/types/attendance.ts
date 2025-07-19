@@ -1,43 +1,9 @@
-export type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"
-
-export interface AttendanceRecord {
+export interface Coach {
   id: string
-  sessionId: string
-  playerId: string
-  status: AttendanceStatus
-  timestamp: Date
-  photoUrl?: string
-  version: number
-}
-
-export interface BulkAttendanceResult {
-  successCount: number
-  records: AttendanceRecord[]
-  timestamp: Date
-  errors?: Array<{
-    playerId: string
-    error: string
-  }>
-}
-
-export interface AttendanceStats {
-  totalSessions: number
-  attendedSessions: number
-  complimentarySessions: number
-  attendanceRate: number
-  status: "good" | "warning" | "critical"
-}
-
-export interface SessionAttendance {
-  sessionId: string
-  date: string
-  timeSlot: "morning" | "evening"
+  username: string
+  name: string
   ageGroup: string
-  totalPlayers: number
-  presentCount: number
-  absentCount: number
-  complimentaryCount: number
-  photoUrl?: string
+  createdAt: Date
 }
 
 export interface Player {
@@ -50,19 +16,29 @@ export interface Player {
   joinDate: Date
 }
 
-export interface Coach {
-  id: string
-  username: string
-  name: string
-  ageGroup: string
-  createdAt: Date
-}
-
 export interface Session {
   id: string
-  date: string
+  date: Date
   timeSlot: "morning" | "evening"
   ageGroup: string
   coachId: string
   photoUrl?: string
 }
+
+export interface AttendanceRecord {
+  id: string
+  sessionId: string
+  playerId: string
+  status: "present_regular" | "present_complimentary" | "absent"
+  timestamp: Date
+  photoUrl?: string
+  version: number
+}
+
+export interface BulkAttendanceResult {
+  successCount: number
+  records: AttendanceRecord[]
+  timestamp: Date
+}
+
+export type AttendanceStatus = "present_regular" | "present_complimentary" | "absent"

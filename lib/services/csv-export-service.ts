@@ -50,7 +50,7 @@ export class CSVExportService {
         player.complimentarySessions.toString(),
         attendanceRate.toString(),
         status,
-        new Date(player.joinDate).toLocaleDateString(),
+        player.joinDate.toLocaleDateString(),
       ]
       lines.push(row.join(","))
     })
