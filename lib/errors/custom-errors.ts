@@ -1,4 +1,3 @@
-// Custom error classes for proper error handling
 export class BusinessError extends Error {
   constructor(
     message: string,

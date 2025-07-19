@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { jwtVerify } from "jose"
-import { exportSchema } from "../../../../lib/validation/schemas"
+import { exportRequestSchema } from "../../../../lib/validation/schemas"
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || "your-secret-key")
 
@@ -30,21 +30,21 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const queryParams = {
-      startDate: searchParams.get("startDate"),
-      endDate: searchParams.get("endDate"),
+      startDate: searchParams.get("startDate") || undefined,
+      endDate: searchParams.get("endDate") || undefined,
       format: searchParams.get("format") || "csv",
     }
 
-    const validatedParams = exportSchema.parse(queryParams)
+    const validatedParams = exportRequestSchema.parse(queryParams)
 
-    // In production, this would query the database with proper joins
+    // Mock attendance data for export
     const mockAttendanceData = [
       {
         playerName: "Alex Johnson",
         ageGroup: "U-12",
         bookedSessions: 12,
-        attendedRegular: 8,
-        attendedComplimentary: 2,
+        attendedSessions: 10,
+        complimentarySessions: 2,
         attendanceRate: 83.3,
         status: "Good",
       },
@@ -52,45 +52,73 @@ export async function GET(request: NextRequest) {
         playerName: "Sam Wilson",
         ageGroup: "U-12",
         bookedSessions: 12,
-        attendedRegular: 6,
-        attendedComplimentary: 1,
-        attendanceRate: 58.3,
-        status: "Low Attendance",
+        attendedSessions: 8,
+        complimentarySessions: 1,
+        attendanceRate: 66.7,
+        status: "Needs Improvement",
+      },
+      {
+        playerName: "Jordan Brown",
+        ageGroup: "U-16",
+        bookedSessions: 12,
+        attendedSessions: 11,
+        complimentarySessions: 0,
+        attendanceRate: 91.7,
+        status: "Excellent",
       },
     ]
 
     if (validatedParams.format === "csv") {
-      // Generate CSV content
-      const csvHeader =
-        "Player Name,Age Group,Booked Sessions,Regular Attendance,Complimentary Used,Attendance Rate (%),Status\n"
-      const csvRows = mockAttendanceData
-        .map(
-          (row) =>
-            `"${row.playerName}","${row.ageGroup}",${row.bookedSessions},${row.attendedRegular},${row.attendedComplimentary},${row.attendanceRate.toFixed(1)},"${row.status}"`,
-        )
-        .join("\n")
+      // Generate CSV
+      const headers = [
+        "Player Name",
+        "Age Group",
+        "Booked Sessions",
+        "Attended Sessions",
+        "Complimentary Sessions",
+        "Attendance Rate (%)",
+        "Status",
+      ]
 
-      const csvContent = csvHeader + csvRows
+      const csvRows = [
+        headers.join(","),
+        ...mockAttendanceData.map((row) =>
+          [
+            `"${row.playerName}"`,
+            `"${row.ageGroup}"`,
+            row.bookedSessions,
+            row.attendedSessions,
+            row.complimentarySessions,
+            row.attendanceRate,
+            `"${row.status}"`,
+          ].join(","),
+        ),
+      ]
+
+      const csvContent = csvRows.join("\n")
+      const fileName = `attendance-report-${new Date().toISOString().split("T")[0]}.csv`
 
       return new NextResponse(csvContent, {
-        status: 200,
         headers: {
           "Content-Type": "text/csv",
-          "Content-Disposition": `attachment; filename="attendance-report-${new Date().toISOString().split("T")[0]}.csv"`,
+          "Content-Disposition": `attachment; filename="${fileName}"`,
         },
       })
     }
 
+    // Return JSON format
     return NextResponse.json({
       data: mockAttendanceData,
       metadata: {
         exportDate: new Date().toISOString(),
         coachId: coach.coachId,
         totalPlayers: mockAttendanceData.length,
+        averageAttendanceRate:
+          mockAttendanceData.reduce((sum, player) => sum + player.attendanceRate, 0) / mockAttendanceData.length,
       },
     })
   } catch (error: any) {
     console.error("Export failed:", error)
-    return NextResponse.json({ error: "Failed to export attendance data" }, { status: 500 })
+    return NextResponse.json({ error: "Export failed" }, { status: 500 })
   }
 }

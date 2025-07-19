@@ -1,6 +1,5 @@
 import { z } from "zod"
 
-// Comprehensive input validation schemas
 export const attendanceInputSchema = z.object({
   sessionId: z.string().uuid("Invalid session ID format"),
   playerId: z.string().uuid("Invalid player ID format"),
@@ -28,8 +27,8 @@ export const loginSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
 })
 
-export const exportSchema = z.object({
-  startDate: z.string().datetime().optional(),
-  endDate: z.string().datetime().optional(),
+export const exportRequestSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
   format: z.enum(["csv", "json"]).default("csv"),
 })

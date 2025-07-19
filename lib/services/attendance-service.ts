@@ -1,28 +1,23 @@
-import type { Pool } from "pg"
-import type { AttendanceRepository } from "../repositories/attendance-repository"
-import type { AttendanceRecord, AttendanceStatus } from "../types/attendance"
-import { BusinessError } from "../errors/custom-errors"
-import { attendanceInputSchema, bulkAttendanceSchema } from "../validation/schemas"
+import type { PostgresAttendanceRepository } from "../repositories/attendance-repository"
 import type { PhotoStorageService } from "./photo-storage-service"
+import { BusinessError } from "../errors/custom-errors"
+import { attendanceInputSchema } from "../validation/schemas"
+import type { AttendanceRecord, AttendanceStatus, BulkAttendanceResult } from "../types/attendance"
 
-export interface BulkAttendanceResult {
-  successCount: number
-  records: AttendanceRecord[]
-  timestamp: Date
+interface MockPool {
+  connect: () => Promise<{
+    query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number }>
+    release: () => void
+  }>
 }
 
 export class AttendanceService {
   constructor(
-    private attendanceRepo: AttendanceRepository,
-    private dbPool: Pool,
+    private attendanceRepo: PostgresAttendanceRepository,
+    private dbPool: MockPool,
     private photoStorage: PhotoStorageService,
   ) {}
 
-  /**
-   * Records attendance with atomic transaction and optimistic locking
-   * Time Complexity: O(1) with proper database indexing
-   * Space Complexity: O(1) - single record operations
-   */
   async recordAttendanceAtomic(
     sessionId: string,
     playerId: string,
@@ -39,24 +34,25 @@ export class AttendanceService {
     const client = await this.dbPool.connect()
 
     try {
+      // Begin transaction
       await client.query("BEGIN")
 
-      // Optimistic locking to prevent race conditions
-      const existingRecord = await this.attendanceRepo.findBySessionAndPlayer(
-        sessionId,
-        playerId,
-        { forUpdate: true }, // EXCLUSIVE lock
-      )
+      // Check for existing record with optimistic locking
+      const existingRecord = await this.attendanceRepo.findBySessionAndPlayer(sessionId, playerId, { forUpdate: true })
 
-      // Handle photo upload asynchronously to avoid blocking attendance recording
+      // Handle photo upload asynchronously
       let photoUrl = null
       if (photoBuffer) {
-        photoUrl = await this.photoStorage.uploadAsync(photoBuffer)
+        try {
+          photoUrl = await this.photoStorage.uploadAsync(photoBuffer)
+        } catch (error) {
+          console.warn("Photo upload failed, continuing with attendance recording:", error)
+        }
       }
 
       let result: AttendanceRecord
       if (existingRecord) {
-        // Idempotent update - prevent duplicate submissions
+        // Idempotent update
         result = await this.attendanceRepo.updateWithVersion(
           existingRecord.id,
           { status, photoUrl },
@@ -84,68 +80,46 @@ export class AttendanceService {
       }
       throw error
     } finally {
-      client.release() // Return connection to pool
+      client.release()
     }
   }
 
-  /**
-   * Bulk attendance recording for performance optimization
-   * Reduces database round-trips from O(n) to O(1)
-   */
   async recordBulkAttendance(
     sessionId: string,
     attendanceData: Map<string, AttendanceStatus>,
     photo?: Buffer,
   ): Promise<BulkAttendanceResult> {
-    const validatedData = bulkAttendanceSchema.parse({
+    // Convert Map to array of records
+    const records = Array.from(attendanceData.entries()).map(([playerId, status]) => ({
       sessionId,
-      attendanceData: Array.from(attendanceData.entries()),
-    })
-
-    // Batch processing to reduce memory pressure
-    const batchSize = 50 // Prevent OOM with large player lists
-    const results: AttendanceRecord[] = []
-    const attendanceEntries = Array.from(attendanceData.entries())
-
-    for (let i = 0; i < attendanceEntries.length; i += batchSize) {
-      const batch = attendanceEntries.slice(i, i + batchSize)
-      const batchResults = await this.processBatch(sessionId, batch, photo)
-      results.push(...batchResults)
-    }
-
-    return {
-      successCount: results.length,
-      records: results,
+      playerId,
+      status,
       timestamp: new Date(),
-    }
-  }
+      photoUrl: null as string | null,
+    }))
 
-  private async processBatch(
-    sessionId: string,
-    batch: [string, AttendanceStatus][],
-    photo?: Buffer,
-  ): Promise<AttendanceRecord[]> {
-    const results: AttendanceRecord[] = []
-
-    for (const [playerId, status] of batch) {
+    // Handle photo upload if provided
+    if (photo) {
       try {
-        const result = await this.recordAttendanceAtomic(sessionId, playerId, status, photo)
-        results.push(result)
+        const photoUrl = await this.photoStorage.uploadAsync(photo)
+        records.forEach((record) => {
+          record.photoUrl = photoUrl
+        })
       } catch (error) {
-        // Log individual failures but continue processing
-        console.error(`Failed to record attendance for player ${playerId}:`, error)
+        console.warn("Photo upload failed, continuing with attendance recording:", error)
       }
     }
 
-    return results
+    // Use repository's bulk create method
+    return await this.attendanceRepo.bulkCreate(records)
   }
 
   async getPlayerMonthlyStats(playerId: string, month: number, year: number) {
     const complimentaryCount = await this.attendanceRepo.getMonthlyComplimentaryCount(playerId, month, year)
 
     return {
-      complimentaryUsed: complimentaryCount,
-      complimentaryRemaining: Math.max(0, 3 - complimentaryCount),
+      complimentarySessions: complimentaryCount,
+      remainingComplimentary: Math.max(0, 3 - complimentaryCount),
     }
   }
 }

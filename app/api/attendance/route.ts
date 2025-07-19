@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
       success: true,
       recordedCount: result.successCount,
       timestamp: result.timestamp,
+      errors: result.errors || [],
     })
   } catch (error: any) {
     // Structured error handling with appropriate HTTP status codes
