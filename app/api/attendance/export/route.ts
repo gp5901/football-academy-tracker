@@ -5,11 +5,6 @@ import jwt from "jsonwebtoken"
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
 // Mock data - In production, this would come from your database
-const mockCoaches = [
-  { id: "1", username: "john_doe", ageGroup: "U-12" },
-  { id: "2", username: "jane_smith", ageGroup: "U-16" },
-]
-
 const mockPlayers = [
   {
     id: "1",
@@ -93,31 +88,9 @@ const mockPlayers = [
   },
 ]
 
-const mockSessions = [
-  {
-    id: "1",
-    date: new Date().toISOString().split("T")[0],
-    timeSlot: "morning" as const,
-    ageGroup: "U-12",
-  },
-  {
-    id: "2",
-    date: new Date().toISOString().split("T")[0],
-    timeSlot: "evening" as const,
-    ageGroup: "U-12",
-  },
-  {
-    id: "3",
-    date: new Date().toISOString().split("T")[0],
-    timeSlot: "morning" as const,
-    ageGroup: "U-16",
-  },
-  {
-    id: "4",
-    date: new Date().toISOString().split("T")[0],
-    timeSlot: "evening" as const,
-    ageGroup: "U-16",
-  },
+const mockCoaches = [
+  { id: "1", username: "john_doe", ageGroup: "U-12" },
+  { id: "2", username: "jane_smith", ageGroup: "U-16" },
 ]
 
 export async function GET(request: NextRequest) {
@@ -136,42 +109,60 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Coach not found" }, { status: 404 })
     }
 
-    // Filter data by coach's age group
+    // Filter players by coach's age group
     const coachPlayers = mockPlayers.filter((player) => player.ageGroup === coach.ageGroup)
-    const todaySessions = mockSessions.filter((session) => session.ageGroup === coach.ageGroup)
 
-    // Calculate stats
-    const totalPlayers = coachPlayers.length
-    const averageAttendance =
-      totalPlayers > 0
-        ? Math.round(
-            coachPlayers.reduce((acc, player) => {
-              const rate = player.bookedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
-              return acc + rate
-            }, 0) / totalPlayers,
-          )
-        : 0
-    const lowAttendancePlayers = coachPlayers.filter((player) => {
-      const rate = player.bookedSessions > 0 ? (player.attendedSessions / player.bookedSessions) * 100 : 0
-      return rate < 70
-    }).length
+    // Generate CSV content
+    const headers = [
+      "Player Name",
+      "Age Group",
+      "Booked Sessions",
+      "Attended Sessions",
+      "Attendance Rate (%)",
+      "Complimentary Sessions Used",
+      "Remaining Sessions",
+      "Status",
+    ]
 
-    return NextResponse.json({
-      coach: {
-        id: coach.id,
-        username: coach.username,
-        ageGroup: coach.ageGroup,
-      },
-      todaySessions,
-      players: coachPlayers,
-      stats: {
-        totalPlayers,
-        averageAttendance,
-        lowAttendancePlayers,
+    const csvRows = coachPlayers.map((player) => {
+      const attendanceRate =
+        player.bookedSessions > 0 ? Math.round((player.attendedSessions / player.bookedSessions) * 100) : 0
+      const remainingSessions = player.bookedSessions - player.attendedSessions
+      const status = attendanceRate >= 90 ? "Excellent" : attendanceRate >= 70 ? "Good" : "Needs Attention"
+
+      return [
+        player.name,
+        player.ageGroup,
+        player.bookedSessions.toString(),
+        player.attendedSessions.toString(),
+        attendanceRate.toString(),
+        player.complimentarySessions.toString(),
+        remainingSessions.toString(),
+        status,
+      ]
+    })
+
+    // Create CSV content
+    const csvContent = [
+      headers.join(","),
+      ...csvRows.map((row) => row.join(",")),
+      "",
+      `Report generated on: ${new Date().toLocaleDateString()}`,
+      `Coach: ${coach.username}`,
+      `Age Group: ${coach.ageGroup}`,
+      `Total Players: ${coachPlayers.length}`,
+    ].join("\n")
+
+    // Return CSV as downloadable file
+    return new NextResponse(csvContent, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": `attachment; filename="attendance-report-${coach.ageGroup}-${new Date().toISOString().split("T")[0]}.csv"`,
       },
     })
   } catch (error) {
-    console.error("Dashboard API error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Export error:", error)
+    return NextResponse.json({ error: "Failed to export data" }, { status: 500 })
   }
 }
