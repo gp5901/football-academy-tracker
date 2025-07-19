@@ -5,37 +5,64 @@ export interface AttendanceRecord {
   sessionId: string
   playerId: string
   status: AttendanceStatus
+  timestamp: Date
   photoUrl?: string
   version: number
+}
+
+export interface BulkAttendanceResult {
+  successCount: number
+  records: AttendanceRecord[]
   timestamp: Date
-  createdAt: Date
-  updatedAt: Date
+  errors?: Array<{
+    playerId: string
+    error: string
+  }>
+}
+
+export interface AttendanceStats {
+  totalSessions: number
+  attendedSessions: number
+  complimentarySessions: number
+  attendanceRate: number
+  status: "good" | "warning" | "critical"
+}
+
+export interface SessionAttendance {
+  sessionId: string
+  date: string
+  timeSlot: "morning" | "evening"
+  ageGroup: string
+  totalPlayers: number
+  presentCount: number
+  absentCount: number
+  complimentaryCount: number
+  photoUrl?: string
 }
 
 export interface Player {
   id: string
   name: string
-  ageGroupId: string
-  monthlySessionsBooked: number
+  ageGroup: string
+  bookedSessions: number
+  attendedSessions: number
+  complimentarySessions: number
   joinDate: Date
-  isActive: boolean
-}
-
-export interface Session {
-  id: string
-  date: Date
-  timeSlot: "morning" | "evening"
-  ageGroupId: string
-  coachId: string
-  photoUrl?: string
-  isActive: boolean
 }
 
 export interface Coach {
   id: string
   username: string
   name: string
-  email: string
-  ageGroupId: string
-  isActive: boolean
+  ageGroup: string
+  createdAt: Date
+}
+
+export interface Session {
+  id: string
+  date: string
+  timeSlot: "morning" | "evening"
+  ageGroup: string
+  coachId: string
+  photoUrl?: string
 }
